@@ -123,13 +123,13 @@ once?"
 
 (def my-transducer
   {:init-state {}
-   :next-fn (fn [state input] nil)
-   :flush (fn [state] nil)})
+   :next-fn    (fn [state input] nil)
+   :flush      (fn [state] nil)})
 
 (def my-scanning-transducer
   {:init-state {}
-   :scan-fn (fn [state last-val input] nil)
-   :flush (fn [state last-val] nil)})
+   :scan-fn    (fn [state last-val input] nil)
+   :flush      (fn [state last-val] nil)})
 
 (comment
   "Any reducer can be recovered from a scanning transducer via"
@@ -176,4 +176,86 @@ once?"
     (if (:next-fn transducer)
       ((:next-fn transducer) state input)
       ((:scan-fn transducer) state current-val input))
-    (transduce tx )))
+    #_(transduce tx )))
+
+(comment
+  "This is needlessly complicated. Let's try simplifying again.")
+
+(def my-transducer
+  {:next-fn    (fn [current state input])
+   :flush      (fn [current state])
+   :init-state {}})
+
+(def transduction
+  {:transducer {}
+   :state      {}
+   :current {}})
+
+(defn init-transduction [transducer]
+  {:transducer transducer
+   ;; REVIEW: Maybe we need an initial value as well.
+   :current nil
+   :state (:init-state transducer)})
+
+(defn transduce-1 [transduction input]
+  (let [{:keys [state current] {:keys [next-fn]} :transducer}
+        transduction
+        step      (next-fn current state input)
+        emissions (cond
+                    (contains? step :emit-n) (:emit-n step)
+                    (contains? step :emit)   [(:emit step)]
+                    :else                    [])
+        next-state (if (contains? step :state) (:state step) state)]
+    (assoc transduction
+           :state state
+           :current (if (seq emissions) (last emissions) current)
+           :emissions (concat (:emissions transduction) emissions))))
+
+(defn compute [transduction inputs]
+  (reduce transduce-1 transduction inputs))
+
+(comment
+  "And now we have transducers all over again from a different
+  angle. Composition is no longer just basic function composition, but that's
+  not important; we'll recover it eventually."
+
+  "The key is that now that we have a reified current state of the transduction,
+  we can pass it around as a value. This is process as a value, or as close as
+  we can come to it."
+
+  "So now let's try to deal with multi-transduce. Incidentally we now need to
+  define interleaving.")
+
+(def multi-transducer
+  {:init-state {}
+   ;; This is a method table. It's written as a list because the methods are
+   ;; "first arg", "second arg", etc..
+   ;; Elsewhere I had named args. That introduces a layer of semantics on the
+   ;; input names (if they're well named) but we need to add another layer of
+   ;; indirection otherwise transducers can't be reused.
+   :next-fn-multi [(fn [current state input]) (fn [current state input])]
+   ;; Interesting question: when do we flush? When one input is exhausted? When
+   ;; they all are? Do we need a list of flush fns?
+   :flush (fn [current state])})
+
+(def i1 (range 10 30))
+(def i2 (range 20))
+
+(defn interleave [interleave-fn & is]
+  ;; Basically tag all values so that we know which stream they came from.
+  (apply interleave-fn (map-indexed (fn [i x] (map (fn [y] [i y]) x)) is)))
+
+(defn multi-transduce-1 [{:keys [state current] {:keys [next-fn-multi]} :transducer}
+                         [index input]]
+  (let [step ((nth next-fn-multi index) current state input)]
+    ;; Proceed as per transduce-1
+
+    ))
+
+(defn multi-compute [transduction inputs]
+  (reduce multi-transduce-1 transduction input))
+
+;; TODO: Need a better set of instructions. This is all very low level. Do
+;; something more akin to SICP and define a full blown DSL for this
+;; problem. Make it as data driven as possible. That will probably help with
+;; optimisation in the long run as well.
