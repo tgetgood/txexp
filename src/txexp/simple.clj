@@ -197,19 +197,23 @@ once?"
    :current nil
    :state (:init-state transducer)})
 
-(defn transduce-1 [transduction input]
-  (let [{:keys [state current] {:keys [next-fn]} :transducer}
-        transduction
-        step      (next-fn current state input)
-        emissions (cond
-                    (contains? step :emit-n) (:emit-n step)
-                    (contains? step :emit)   [(:emit step)]
-                    :else                    [])
+(defn transduce [next-fn current state input]
+  (let [step       (next-fn current state input)
+        emissions  (cond
+                     (contains? step :emit-n) (:emit-n step)
+                     (contains? step :emit)   [(:emit step)]
+                     :else                    [])
         next-state (if (contains? step :state) (:state step) state)]
-    (assoc transduction
-           :state state
-           :current (if (seq emissions) (last emissions) current)
-           :emissions (concat (:emissions transduction) emissions))))
+    {:state           next-state
+     :current   (if (seq emissions) (last emissions) current)
+     :emissions emissions}))
+
+(defn transduce-1 [transduction input]
+  (let [{:keys [state current] {:keys [next-fn]} :transducer} transduction
+        step (transduce next-fn current state input)]
+    (merge transduction
+           step
+           {:emissions (concat (:emissions transduction) (:emissions step))})))
 
 (defn compute [transduction inputs]
   (reduce transduce-1 transduction inputs))
@@ -223,8 +227,30 @@ once?"
   we can pass it around as a value. This is process as a value, or as close as
   we can come to it."
 
-  "So now let's try to deal with multi-transduce. Incidentally we now need to
-  define interleaving.")
+  "So now let's try to deal with multi-transduce. Consequently we also now need
+  to define interleaving."
+
+  "I don't want to define interleaving. I also don't know how. The interleaving
+  itself is business logic and not our concern. What we really need to define is
+  stream tagging and merging: the act of combining multiple streams into one
+  without losing track of the origin of messages.")
+
+(def i1 (range 10 30))
+(def i2 (range 20))
+
+(defn get-tag [tagged-val]
+  (first tagged-val))
+
+(defn get-val [tagged-val]
+  (second tagged-val))
+
+(defn tag-stream [tag stream]
+  (into (empty stream)
+        (map (fn [x] [tag x]) stream)))
+
+(defn tag-merge [interleave-fn & is]
+  ;; Basically tag all values so that we know which stream they came from.
+  (apply interleave-fn (map-indexed tag-stream is)))
 
 (def multi-transducer
   {:init-state {}
@@ -238,22 +264,69 @@ once?"
    ;; they all are? Do we need a list of flush fns?
    :flush (fn [current state])})
 
-(def i1 (range 10 30))
-(def i2 (range 20))
+(defn get-tag-fn [tag transducer]
+  (get-in transducer [:next-fn-multi tag]))
 
-(defn interleave [interleave-fn & is]
-  ;; Basically tag all values so that we know which stream they came from.
-  (apply interleave-fn (map-indexed (fn [i x] (map (fn [y] [i y]) x)) is)))
+(comment
+  "Transducer :: [Signal] -> Signal"
 
-(defn multi-transduce-1 [{:keys [state current] {:keys [next-fn-multi]} :transducer}
-                         [index input]]
-  (let [step ((nth next-fn-multi index) current state input)]
-    ;; Proceed as per transduce-1
+  "Transducers act the same way functions do in a classical FP system. Functions
+  take data to data, but they don't do anything until data comes in in the first
+  place. So you assemble a system by composing functions together into a call
+  graph and then wait for input at runtime to do the actual computation."
 
-    ))
+  "What I'm here calling transducers are the same as functions in that
+  respect. except that there is a much richer set of automatic transformations
+  that can be performed by the compiler or the runtime to optimise or distribute
+  the program."
+
+  "In principle we should be able to preserve basic composition:"
+
+  (t1 (t2 (t3 x y) z))
+
+  "Is a tranducing process, where x, y, & z are inputs from the outside world
+  and the output is a signal to the outside world."
+
+  "I'd really like to have a reasonable theory of process. That means effects
+  are not only accounted for, but are somehow first class. They can't be allowed
+  to destroy the system however.")
+
+
+(defn multi-transduce-1 [{:keys [state current transducer] :as transducer} tagged-val]
+  (let [step (transduce (get-tag-fn (get-tag tagged-val) transducer) current state (get-val tagged-val))]
+    (merge transducer
+           step
+           ;; FIXME: This is very state-monad and not at all aesthetically appealing.
+           {:emissions (concat (:emissions transducer) (:emissions step))})))
 
 (defn multi-compute [transduction inputs]
-  (reduce multi-transduce-1 transduction input))
+  (reduce multi-transduce-1 transduction inputs))
+
+(defn build-transduction [transducer inputs]
+  )
+
+(defmacro deftx [name {:keys [next-fn] :as transducer}]
+  (let [nargs (if (fn? next-fn) 1 (count next-fn))
+        arg-syms (take nargs (repeatedly (gensym)))]
+    `(def ~name
+       (fn [~@arg-syms]
+         ;; Somehow we have to build a signal graph... The inputs need to "push
+         ;; forward" into this transducer.
+         ;;
+         ;; These transducers are defined "backwards" in that they define
+         ;; they're inputs and emit to nowhere, whereas a usable physical
+         ;; computational substrate needs to push information
+         ;; forwards. Basically we're defining a flow: a computational graph.
+         ;;
+         ;; I think at this point signals need to be reified. They're basically
+         ;; message queues that push into fns that push back into different
+         ;; queues.
+         ;;
+         ;; In addition, since they're just queues, they can be pushed to from
+         ;; the outside world and pulled from via anything. This lets us lauch
+         ;; side effects in response to the values coming over a queue. DB
+         ;; writes, HTTP requests, anything you can think of.
+         (build-transduction transducer [~@arg-syms])))))
 
 ;; TODO: Need a better set of instructions. This is all very low level. Do
 ;; something more akin to SICP and define a full blown DSL for this
