@@ -284,7 +284,7 @@ once?"
 
   (t1 (t2 (t3 x y) z))
 
-  "Is a tranducing process, where x, y, & z are inputs from the outside world
+  "Is a transducing process, where x, y, & z are inputs from the outside world
   and the output is a signal to the outside world."
 
   "I'd really like to have a reasonable theory of process. That means effects
@@ -302,19 +302,64 @@ once?"
 (defn multi-compute [transduction inputs]
   (reduce multi-transduce-1 transduction inputs))
 
+(defn signal []
+  (atom
+   {:buffer []
+    :subscribers []}))
+
+(def my-transducer
+  {:initial-value {}
+   :init-state {}
+   :next-fn [(fn [current state input])]
+   ;; This revolves around what Bird calls left zeros. We're really cheating and
+   ;; implicitly defining a predicate shortcut with (reduced value). Maybe we
+   ;; should bring back the predicate.
+   ;; If all inputs to a transducer have reached zeroes, we should terminate
+   ;; early and save time, but just because one input is finished doesn't mean
+   ;; we should ignore whatever else may come out of the others. That's up to
+   ;; the business logic.
+   :flush-fn (fn [current state])})
+
+(def my-transduction
+  {:transducer {}
+   :current-value {}
+   :state {}
+   :in []
+   :out []})
+
+(defn interleave-all [& seqs]
+  (loop [seqs seqs
+         out []]
+    (if (empty? seqs)
+      out
+      (let [s' (remove empty? seqs)
+            l (reduce min Double/POSITIVE_INFINITY (map count s'))]
+        (recur (map #(drop l %) s')
+               (concat out (apply interleave s')))))))
+
+(def signal
+  ;; Subscribers is a list of downstream transducers.
+  {:type ::sigsegv
+   :subscribers []})
+
 (defn build-transduction [transducer inputs]
-  )
+  {:transducer transducer
+   :state (:init-state transducer)
+   :current-value (:init-value transducer)
+   :in inputs
+   :out })
 
 (defmacro deftx [name {:keys [next-fn] :as transducer}]
   (let [nargs (if (fn? next-fn) 1 (count next-fn))
         arg-syms (take nargs (repeatedly (gensym)))]
     `(def ~name
        (fn [~@arg-syms]
+         (build-transduction transducer [~@arg-syms])
          ;; Somehow we have to build a signal graph... The inputs need to "push
          ;; forward" into this transducer.
          ;;
          ;; These transducers are defined "backwards" in that they define
-         ;; they're inputs and emit to nowhere, whereas a usable physical
+         ;; their inputs and emit to nowhere, whereas a usable physical
          ;; computational substrate needs to push information
          ;; forwards. Basically we're defining a flow: a computational graph.
          ;;
@@ -326,9 +371,22 @@ once?"
          ;; the outside world and pulled from via anything. This lets us lauch
          ;; side effects in response to the values coming over a queue. DB
          ;; writes, HTTP requests, anything you can think of.
-         (build-transduction transducer [~@arg-syms])))))
+         ))))
 
-;; TODO: Need a better set of instructions. This is all very low level. Do
-;; something more akin to SICP and define a full blown DSL for this
-;; problem. Make it as data driven as possible. That will probably help with
-;; optimisation in the long run as well.
+(comment
+  "I can't make any useful progress without some notion of a signal type. A
+  signal passes chunks of value (vectors of length zero or more) from source
+  (single) to (possibly multiple) subscribers."
+
+  "Transducers don't care about who's listening to them, but the network has
+  to.")
+
+(defn handle-emission )
+(defn emit [sig emission]
+  (run!
+   (fn [sub]
+     (handle-emission sub (:type sig) emission))
+   (:subscribers sig)))
+
+(defn run-transduction [transduction]
+  )
