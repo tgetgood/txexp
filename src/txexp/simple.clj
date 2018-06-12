@@ -1,5 +1,5 @@
 (ns txexp.simple
-  "Conceptually simplest helpers for creating transducers.")
+  "Conceptually simple helpers for creating transducers.")
 
 (defn last-rf
   "Reducing fn that acts like last on a sequential collection"
@@ -399,3 +399,38 @@ once?"
 
   "So we listen to both x and y and when we get input on one of them, we push it
   down the chain.")
+
+(comment
+  "Let's try that again, shall we?")
+
+(defn transducer [{:keys [next-fn init-state init-val flush-fn]}]
+  (let [next-fn (if (fn? next-fn) [next-fn] next-fn)
+        nargs   (count next-fn)]
+    (fn [& args]
+      (assert (= nargs (count args)))
+      (let [sigs   (apply merge-with concat (map :signal-graph args))
+            txs    (apply merge (map :transductions args))
+            k      (java.util.UUID/randomUUID)
+            inputs (map :key args)
+            imap   (zipmap inputs (repeat [k]))
+            fn-map (zipmap inputs next-fn)]
+        {:key           k
+         :signal-graph  (merge-with concat sigs imap)
+         :transductions (assoc txs k {:key           k
+                                      :flush-fn      flush-fn
+                                      :next-fn       fn-map
+                                      :state         init-state
+                                      :current-value init-val})}))))
+
+(defn map* [f]
+  (transducer {:next-fn (fn [_ _ x] {:emit (f x)})}))
+
+(def g1 ((map* inc) {:key "t"}))
+
+(defn compute [sg input]
+  (let [todo (get-in sg [:signal-graph (:key input)])
+        res (map (fn [rec]
+                   (
+                    )))]
+    ()
+    ))
