@@ -347,7 +347,7 @@ once?"
    :state (:init-state transducer)
    :current-value (:init-value transducer)
    :in inputs
-   :out })
+   :out [] })
 
 (defmacro deftx [name {:keys [next-fn] :as transducer}]
   (let [nargs (if (fn? next-fn) 1 (count next-fn))
@@ -381,7 +381,8 @@ once?"
   "Transducers don't care about who's listening to them, but the network has
   to.")
 
-(defn handle-emission )
+(defn handle-emission [])
+
 (defn emit [sig emission]
   (run!
    (fn [sub]
@@ -390,3 +391,11 @@ once?"
 
 (defn run-transduction [transduction]
   )
+
+(comment
+  (t1 (t2 x) y)
+
+  "Becomes a graph y -> t1, x -> t2 -> t1"
+
+  "So we listen to both x and y and when we get input on one of them, we push it
+  down the chain.")
