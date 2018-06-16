@@ -413,24 +413,36 @@ once?"
             k      (java.util.UUID/randomUUID)
             inputs (map :key args)
             imap   (zipmap inputs (repeat [k]))
-            fn-map (zipmap inputs next-fn)]
+            fn-map (zipmap inputs next-fn)
+            node   (agent {:key           k
+                           :flush-fn      flush-fn
+                           :next-fn       fn-map
+                           :state         init-state
+                           :current-value init-val})]
         {:key           k
          :signal-graph  (merge-with concat sigs imap)
-         :transductions (assoc txs k {:key           k
-                                      :flush-fn      flush-fn
-                                      :next-fn       fn-map
-                                      :state         init-state
-                                      :current-value init-val})}))))
+         :transductions (assoc txs k node)}))))
 
 (defn map* [f]
-  (transducer {:next-fn (fn [_ _ x] {:emit (f x)})}))
+  (transducer {:next-fn (fn [_ _ x] {:emit [(f x)]})}))
 
 (def g1 ((map* inc) {:key "t"}))
 
-(defn compute [sg input]
-  (let [todo (get-in sg [:signal-graph (:key input)])
-        res (map (fn [rec]
-                   (
-                    )))]
-    ()
-    ))
+(declare push-updates)
+
+(defn run-node [{:keys [state current-value next-fn] :as node} sg input]
+  (println next-fn (:key input))
+  (let [{:keys [emit] :as step} ((get next-fn (:key input)) current-value state (:value input))
+        next-state              (if (contains? step :state) (:state step) state)
+        next-value              (if (seq emit) (last emit) current-value)]
+    (push-updates sg {:key (:key node) :value emit})
+    (assoc node
+           :state next-state
+           :current-value next-value)))
+
+(defn push-updates [sg input]
+  (let [notify (get-in sg [:signal-graph (:key input)])]
+    (run! (fn [k]
+            (let [node (get-in sg [:transductions k])]
+              (send node run-node sg input)))
+          notify)))
